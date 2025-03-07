@@ -1,0 +1,286 @@
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const loader = document.getElementById('loader');
+        if (loader) {
+            loader.addEventListener('animationend', () => {
+                loader.style.display = 'none';
+                document.getElementById('loginContainer').style.display = 'flex';
+                document.getElementById('predictionContainer').style.display = 'none';
+            });
+        } else {
+            console.error('Loader element not found');
+            document.getElementById('loginContainer').style.display = 'flex';
+            document.getElementById('predictionContainer').style.display = 'none';
+        }
+    });
+
+    function login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+
+        if (!username || !password) {
+            alert("請輸入帳號和密碼！");
+            return;
+        }
+
+        const data = {
+            username: username,
+            password: password
+        };
+
+        // 更新為新的 Google Apps Script 部署 URL
+        fetch('https://script.google.com/macros/s/AKfycbzZeyY9ylDJM73JhmDvleprBcj-aFtoXxi9joGU8NBNAqZwrfPEn7UO-anbQJ92Pxt7/exec', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP 錯誤！狀態碼: ${response.status} - ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(result => {
+            console.log('Server response:', result); // 記錄伺服器回應以調試
+            if (result.success) {
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('predictionContainer').style.display = 'flex';
+                initGrid();
+            } else {
+                alert(`登入失敗！伺服器回應: ${result.message || '未知錯誤'}`);
+            }
+        })
+        .catch(error => {
+            console.error('Fetch Error:', error);
+            if (error.message.includes('403')) {
+                alert("權限不足，請確認 Apps Script 部署設為「任何人」存取！");
+            } else if (error.message.includes('network')) {
+                alert("無法連接到伺服器，請檢查網路或防火牆！");
+            } else if (error.message.includes('timeout')) {
+                alert("請求超時，請稍後再試！");
+            } else {
+                alert(`發生錯誤: ${error.message}`);
+            }
+        });
+    }
+
+    let pages = [[]];
+    let currentPage = 0;
+    const gridSize = 30;
+    let stats = { total: 0, 莊: 0, 閒: 0, 和: 0, '6': 0 };
+
+    function initGrid() {
+        const grid = document.getElementById('grid');
+        if (!grid) {
+            console.error('Grid element not found');
+            return;
+        }
+        grid.innerHTML = '';
+        for (let i = 0; i < gridSize; i++) {
+            const cell = document.createElement('div');
+            cell.classList.add('cell');
+            grid.appendChild(cell);
+        }
+        updateGrid();
+        updateStatsDisplay();
+    }
+
+    function addResult(type) {
+        if (pages[currentPage].length >= gridSize) {
+            pages.push([]);
+            currentPage++;
+            handleResultsChange();
+        }
+        pages[currentPage].push(type);
+        updateStats(type, 1);
+        updateGrid();
+        updatePageControls();
+        if (currentPage > 0 || pages[currentPage].length >= 1) {
+            predict();
+        }
+    }
+
+    function resetResults() {
+        pages = [[]];
+        currentPage = 0;
+        stats = { total: 0, 莊: 0, 閒: 0, 和: 0, '6': 0 };
+        const grid = document.getElementById('grid');
+        if (grid) {
+            grid.innerHTML = '';
+            for (let i = 0; i < gridSize; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                grid.appendChild(cell);
+            }
+        }
+        updateGrid();
+        updateStatsDisplay();
+        handleResultsChange();
+        updatePageControls();
+    }
+
+    function undoResult() {
+        if (pages[currentPage].length > 0) {
+            const removed = pages[currentPage].pop();
+            updateStats(removed, -1);
+        } else if (currentPage > 0) {
+            pages.pop();
+            currentPage--;
+            recalculateStats();
+        }
+        updateGrid();
+        updateStatsDisplay();
+        handleResultsChange();
+        updatePageControls();
+    }
+
+    function handleResultsChange() {
+        const prediction = document.getElementById('prediction');
+        const probability = document.getElementById('probability');
+        const predictionLoader = document.getElementById('prediction-loader');
+        if (prediction) {
+            prediction.textContent = '等待預測...';
+            prediction.style.color = '#ffeb3b';
+        }
+        if (probability) probability.textContent = '機率: 莊 0%, 閒 0%, 和 0%';
+        if (predictionLoader) predictionLoader.style.display = 'none';
+    }
+
+    function updateGrid() {
+        const cells = document.querySelectorAll('.cell');
+        if (!cells.length) {
+            console.error('No cells found in grid');
+            return;
+        }
+        cells.forEach(cell => {
+            cell.textContent = '';
+            cell.className = 'cell';
+        });
+        const currentResults = pages[currentPage];
+        for (let i = 0; i < currentResults.length; i++) {
+            const col = Math.floor(i / 6);
+            const row = i % 6;
+            const cellIndex = row * 5 + col;
+            if (cellIndex < gridSize && cells[cellIndex]) {
+                cells[cellIndex].textContent = currentResults[i];
+                if (currentResults[i] === '莊') cells[cellIndex].classList.add('red');
+                else if (currentResults[i] === '閒') cells[cellIndex].classList.add('blue');
+                else if (currentResults[i] === '和') cells[cellIndex].classList.add('green');
+                else if (currentResults[i] === '6') cells[cellIndex].classList.add('red');
+            }
+        }
+    }
+
+    function updateStats(type, delta) {
+        stats.total += delta;
+        if (type === '莊') stats.莊 += delta;
+        else if (type === '閒') stats.閒 += delta;
+        else if (type === '和') stats.和 += delta;
+        else if (type === '6') stats['6'] += delta;
+        updateStatsDisplay();
+    }
+
+    function recalculateStats() {
+        stats = { total: 0, 莊: 0, 閒: 0, 和: 0, '6': 0 };
+        pages.forEach(page => {
+            page.forEach(r => {
+                stats.total++;
+                if (r === '莊') stats.莊++;
+                else if (r === '閒') stats.閒++;
+                else if (r === '和') stats.和++;
+                else if (r === '6') stats['6']++;
+            });
+        });
+        updateStatsDisplay();
+    }
+
+    function updateStatsDisplay() {
+        const statsDiv = document.getElementById('stats');
+        if (statsDiv) {
+            statsDiv.textContent = 
+                `局數: ${stats.total}, 莊: ${stats.莊}, 閒: ${stats.閒}, 和: ${stats.和}, 6: ${stats['6']}`;
+        }
+    }
+
+    function predict() {
+        const predictionDiv = document.getElementById('prediction');
+        const probabilityDiv = document.getElementById('probability');
+        const predictionLoader = document.getElementById('prediction-loader');
+
+        if (predictionDiv) {
+            predictionDiv.textContent = '讀取中...';
+            predictionDiv.style.color = '#ffeb3b';
+        }
+        if (predictionLoader) predictionLoader.style.display = 'block';
+        if (probabilityDiv) probabilityDiv.textContent = '機率: 莊 0%, 閒 0%, 和 0%';
+
+        setTimeout(() => {
+            const randomNum = Math.floor(Math.random() * 101);
+            let prediction;
+
+            if (randomNum <= 45) prediction = '閒';
+            else if (randomNum <= 90) prediction = '莊';
+            else prediction = '和';
+
+            // 調整機率範圍：莊/閒 60%-99%，和 0%-60%
+            const maxProb = Math.floor(Math.random() * (99 - 60 + 1) + 60); // 60-99%
+            const tieProb = Math.floor(Math.random() * 61); // 0-60%
+            const remainingProb = 100 - maxProb - tieProb;
+
+            let probs = { 莊: 0, 閒: 0, 和: 0 };
+            if (prediction === '莊') {
+                probs.莊 = maxProb;
+                probs.閒 = remainingProb;
+                probs.和 = tieProb;
+            } else if (prediction === '閒') {
+                probs.閒 = maxProb;
+                probs.莊 = remainingProb;
+                probs.和 = tieProb;
+            } else {
+                probs.和 = tieProb;
+                // 當預測為和時，莊和閒平分剩餘機率
+                const splitProb = Math.floor((100 - tieProb) / 2);
+                probs.莊 = splitProb;
+                probs.閒 = 100 - tieProb - splitProb; // 確保總和為 100%
+            }
+
+            if (predictionDiv) {
+                predictionDiv.textContent = prediction;
+                if (prediction === '莊') predictionDiv.style.color = '#ff3333';
+                else if (prediction === '閒') predictionDiv.style.color = '#3333ff';
+                else if (prediction === '和') predictionDiv.style.color = '#33ff33';
+            }
+            if (probabilityDiv) {
+                probabilityDiv.textContent = 
+                    `機率: 莊 ${probs.莊}%, 閒 ${probs.閒}%, 和 ${probs.和}%`;
+            }
+            if (predictionLoader) predictionLoader.style.display = 'none';
+        }, 1000);
+    }
+
+    function prevPage() {
+        if (currentPage > 0) {
+            currentPage--;
+            updateGrid();
+            updatePageControls();
+            handleResultsChange();
+        }
+    }
+
+    function nextPage() {
+        if (currentPage < pages.length - 1 || pages[currentPage].length > 0) {
+            if (currentPage === pages.length - 1) pages.push([]);
+            currentPage++;
+            updateGrid();
+            updatePageControls();
+            handleResultsChange();
+        }
+    }
+
+    function updatePageControls() {
+        const prevBtn = document.getElementById('prevPage');
+        const nextBtn = document.getElementById('nextPage');
+        if (prevBtn) prevBtn.disabled = currentPage === 0;
+        if (nextBtn) nextBtn.disabled = currentPage === pages.length - 1 && pages[currentPage].length === 0;
+    }
+</script>
